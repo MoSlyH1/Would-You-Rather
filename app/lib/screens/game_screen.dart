@@ -69,25 +69,41 @@ class _GameScreenState extends State<GameScreen> {
 
   // Tap registers the choice instantly. The vote is sent in the background
   // so the user is never waiting on the network to see the result.
-  void _choose(String choice) {
-    final q = _current;
-    if (q == null || _chosen != null) return;
+void _choose(String choice) {
+  final q = _current;
+  if (q == null || _chosen != null) return;
+
+  setState(() {
+    _chosen = choice;
+    if (choice == 'a') {
+      q.votesA++;
+    } else {
+      q.votesB++;
+    }
+  });
+
+  Api.vote(q.id, choice).then((res) {
+    if (!mounted) return;
+
     setState(() {
-      _chosen = choice;
-      if (choice == 'a') {
-        q.votesA++;
-      } else {
-        q.votesB++;
+      q.votesA = res['votes_a']!;
+      q.votesB = res['votes_b']!;
+    });
+
+    // Show results briefly, then move on
+    Future.delayed(const Duration(milliseconds: 1200), () {
+      if (mounted) {
+        _next();
       }
     });
-    Api.vote(q.id, choice).then((res) {
-      if (!mounted) return;
-      setState(() {
-        q.votesA = res['votes_a']!;
-        q.votesB = res['votes_b']!;
-      });
-    }).catchError((_) {/* keep optimistic counts */});
-  }
+  }).catchError((_) {
+    Future.delayed(const Duration(milliseconds: 1200), () {
+      if (mounted) {
+        _next();
+      }
+    });
+  });
+}
 
   void _next() {
     setState(() {

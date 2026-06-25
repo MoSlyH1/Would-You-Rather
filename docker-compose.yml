@@ -1,0 +1,35 @@
+# Local testing: spins up Postgres + the app together.
+#   docker compose up --build
+# Then open http://localhost:3000
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: wyr
+      POSTGRES_PASSWORD: wyr
+      POSTGRES_DB: wyr
+    ports:
+      - "5432:5432"
+    volumes:
+      - wyr_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wyr"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://wyr:wyr@db:5432/wyr
+      PGSSL: disable
+      ADMIN_PASSWORD: WouldYouRather123
+      PORT: 3000
+    ports:
+      - "3000:3000"
+
+volumes:
+  wyr_pgdata:

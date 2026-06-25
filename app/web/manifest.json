@@ -1,0 +1,11 @@
+{
+  "name": "Would You Rather",
+  "short_name": "WYR",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#12060A",
+  "theme_color": "#12060A",
+  "description": "Would You Rather - Lebanese edition.",
+  "orientation": "portrait-primary",
+  "icons": []
+}

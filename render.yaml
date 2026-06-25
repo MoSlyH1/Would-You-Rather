@@ -1,0 +1,16 @@
+# Render blueprint (optional). You still create the Neon database separately
+# and paste its connection string into DATABASE_URL below (or in the dashboard).
+services:
+  - type: web
+    name: would-you-rather
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATABASE_URL
+        sync: false # set this in the Render dashboard to your Neon URL
+      - key: ADMIN_PASSWORD
+        value: WouldYouRather123
+      - key: MAX_APPROVED
+        value: "250"

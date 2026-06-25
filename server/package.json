@@ -1,0 +1,14 @@
+{
+  "name": "wyr-server",
+  "version": "1.0.0",
+  "description": "Would You Rather - API + static host",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "pg": "^8.12.0"
+  }
+}

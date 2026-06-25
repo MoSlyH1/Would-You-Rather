@@ -287,25 +287,40 @@ void _choose(String choice) {
     );
   }
 
-  Widget _footer(Question q) {
-    if (_chosen == null) {
-      return Text('Tap a card to choose',
-          style: TextStyle(color: AppTheme.muted, fontSize: 14));
-    }
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Text('${q.totalVotes} vote${q.totalVotes == 1 ? '' : 's'}',
-            style: TextStyle(color: AppTheme.muted, fontSize: 13)),
-        FilledButton.icon(
-          onPressed: _next,
-          style: FilledButton.styleFrom(backgroundColor: AppTheme.crimson),
-          icon: const Icon(Icons.skip_next),
-          label: const Text('Next question'),
-        ),
-      ],
+Widget _footer(Question q) {
+  if (_chosen == null) {
+    return const Padding(
+      padding: EdgeInsets.symmetric(vertical: 12),
+      child: Text('Tap a card to choose'),
     );
   }
+
+  return SizedBox(
+    width: double.infinity,
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Center(
+          child: Text(
+            '${q.totalVotes} vote${q.totalVotes == 1 ? '' : 's'}',
+          ),
+        ),
+        const SizedBox(height: 12),
+        SizedBox(
+          height: 52,
+          child: FilledButton.icon(
+            onPressed: _next,
+            icon: const Icon(Icons.skip_next),
+            label: const Text(
+              'Next Question',
+              style: TextStyle(fontSize: 16),
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+}
 
   Widget _centerMsg(IconData icon, String title, String sub,
       {VoidCallback? action}) {

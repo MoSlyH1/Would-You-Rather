@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import '../api.dart';
@@ -16,8 +17,9 @@ class _GameScreenState extends State<GameScreen> {
   int _pos = 0;
   bool _loading = true;
   String? _error;
-  String? _chosen; // 'a' | 'b' | null  (null = not yet voted)
-  bool _voting = false;
+  String? _chosen; // 'a' | 'b' | null
+  Timer? _wakeTimer;
+  bool _slow = false;
 
   @override
   void initState() {
@@ -25,14 +27,27 @@ class _GameScreenState extends State<GameScreen> {
     _load();
   }
 
+  @override
+  void dispose() {
+    _wakeTimer?.cancel();
+    super.dispose();
+  }
+
   Future<void> _load() async {
     setState(() {
       _loading = true;
       _error = null;
+      _slow = false;
+    });
+    // After a few seconds, tell the user the free server may be waking up.
+    _wakeTimer?.cancel();
+    _wakeTimer = Timer(const Duration(seconds: 4), () {
+      if (mounted && _loading) setState(() => _slow = true);
     });
     try {
       final qs = await Api.fetchQuestions(category: _category);
       qs.shuffle(Random());
+      if (!mounted) return;
       setState(() {
         _deck = qs;
         _pos = 0;
@@ -40,45 +55,52 @@ class _GameScreenState extends State<GameScreen> {
         _loading = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _error = e.toString();
         _loading = false;
       });
+    } finally {
+      _wakeTimer?.cancel();
     }
   }
 
   Question? get _current => _deck.isEmpty ? null : _deck[_pos % _deck.length];
 
-  Future<void> _vote(String choice) async {
+  // Tap registers the choice instantly. The vote is sent in the background
+  // so the user is never waiting on the network to see the result.
+  void _choose(String choice) {
     final q = _current;
-    if (q == null || _chosen != null || _voting) return;
+    if (q == null || _chosen != null) return;
     setState(() {
-      _voting = true;
-      _chosen = choice; // optimistic
+      _chosen = choice;
+      if (choice == 'a') {
+        q.votesA++;
+      } else {
+        q.votesB++;
+      }
     });
-    try {
-      final res = await Api.vote(q.id, choice);
+    Api.vote(q.id, choice).then((res) {
+      if (!mounted) return;
       setState(() {
         q.votesA = res['votes_a']!;
         q.votesB = res['votes_b']!;
       });
-    } catch (_) {
-      // keep optimistic local bump so the UI still feels responsive
-      setState(() {
-        if (choice == 'a') q.votesA++;
-        if (choice == 'b') q.votesB++;
-      });
-    } finally {
-      setState(() => _voting = false);
-    }
+    }).catchError((_) {/* keep optimistic counts */});
   }
 
   void _next() {
     setState(() {
       _pos++;
       _chosen = null;
-      if (_pos % _deck.length == 0) _deck.shuffle(Random());
+      if (_deck.isNotEmpty && _pos % _deck.length == 0) _deck.shuffle(Random());
     });
+  }
+
+  void _pickCategory(String c) {
+    if (_category == c) return;
+    setState(() => _category = c);
+    _load();
   }
 
   @override
@@ -94,19 +116,20 @@ class _GameScreenState extends State<GameScreen> {
 
   Widget _header() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
+      padding: const EdgeInsets.fromLTRB(20, 14, 20, 6),
       child: Row(
         children: [
           const Text('Would You ',
-              style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800)),
+              style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800)),
           const Text('Rather',
               style: TextStyle(
-                  fontSize: 26,
+                  fontSize: 24,
                   fontWeight: FontWeight.w900,
                   color: AppTheme.crimson)),
           const Spacer(),
           Text('@jad',
-              style: TextStyle(color: AppTheme.muted.withOpacity(0.8), fontSize: 13)),
+              style: TextStyle(
+                  color: AppTheme.muted.withOpacity(0.8), fontSize: 13)),
         ],
       ),
     );
@@ -131,14 +154,10 @@ class _GameScreenState extends State<GameScreen> {
                 color: selected ? Colors.white : AppTheme.muted,
                 fontWeight: FontWeight.w600),
             backgroundColor: AppTheme.card,
-            selectedColor: c == 'All' ? AppTheme.crimson : AppTheme.categoryColor(c),
+            selectedColor:
+                c == 'All' ? AppTheme.crimson : AppTheme.categoryColor(c),
             side: BorderSide(color: Colors.white.withOpacity(0.06)),
-            onSelected: (_) {
-              if (_category != c) {
-                _category = c;
-                _load();
-              }
-            },
+            onSelected: (_) => _pickCategory(c),
           );
         },
       ),
@@ -146,7 +165,25 @@ class _GameScreenState extends State<GameScreen> {
   }
 
   Widget _body() {
-    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_loading) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const CircularProgressIndicator(),
+            const SizedBox(height: 18),
+            Text(_slow ? 'Waking up the server…' : 'Loading questions…',
+                style: const TextStyle(fontWeight: FontWeight.w700)),
+            if (_slow) ...[
+              const SizedBox(height: 6),
+              Text('The free server sleeps when idle.\nFirst load can take up to a minute.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: AppTheme.muted, fontSize: 13)),
+            ],
+          ],
+        ),
+      );
+    }
     if (_error != null) {
       return _centerMsg(Icons.cloud_off, 'Could not load questions', _error!,
           action: _load);
@@ -157,56 +194,64 @@ class _GameScreenState extends State<GameScreen> {
           'Be the first to submit one for this category!');
     }
 
-    return LayoutBuilder(builder: (context, c) {
-      final wide = c.maxWidth > 760;
-      final cardA = _ChoiceCard(
-        text: q.optionA,
-        color: AppTheme.optionA,
-        percent: q.percentA,
-        revealed: _chosen != null,
-        picked: _chosen == 'a',
-        onTap: () => _vote('a'),
-      );
-      final cardB = _ChoiceCard(
-        text: q.optionB,
-        color: AppTheme.optionB,
-        percent: q.percentB,
-        revealed: _chosen != null,
-        picked: _chosen == 'b',
-        onTap: () => _vote('b'),
-      );
-
-      final pair = wide
-          ? Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(child: cardA),
-                Center(child: _orBadge()),
-                Expanded(child: cardB),
-              ],
-            )
-          : Column(children: [
-              Expanded(child: cardA),
-              _orBadge(),
-              Expanded(child: cardB),
-            ]);
-
-      return Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1100),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-            child: Column(
-              children: [
-                _catTag(q),
-                const SizedBox(height: 8),
-                Expanded(child: pair),
-                const SizedBox(height: 10),
-                _footer(q),
-              ],
-            ),
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 1100),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 6, 16, 14),
+          child: Column(
+            children: [
+              _catTag(q),
+              const SizedBox(height: 10),
+              Expanded(child: _cards(q)),
+              const SizedBox(height: 12),
+              _footer(q),
+            ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _cards(Question q) {
+    final cardA = _ChoiceCard(
+      label: 'A',
+      text: q.optionA,
+      color: AppTheme.optionA,
+      percent: q.percentA,
+      revealed: _chosen != null,
+      picked: _chosen == 'a',
+      onTap: () => _choose('a'),
+    );
+    final cardB = _ChoiceCard(
+      label: 'B',
+      text: q.optionB,
+      color: AppTheme.optionB,
+      percent: q.percentB,
+      revealed: _chosen != null,
+      picked: _chosen == 'b',
+      onTap: () => _choose('b'),
+    );
+
+    return LayoutBuilder(builder: (context, c) {
+      final wide = c.maxWidth > 720;
+      if (wide) {
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(child: cardA),
+            const SizedBox(width: 12),
+            Expanded(child: cardB),
+          ],
+        );
+      }
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(child: cardA),
+          const SizedBox(height: 12),
+          Expanded(child: cardB),
+        ],
       );
     });
   }
@@ -226,25 +271,10 @@ class _GameScreenState extends State<GameScreen> {
     );
   }
 
-  Widget _orBadge() {
-    return Padding(
-      padding: const EdgeInsets.all(10),
-      child: Container(
-        width: 46,
-        height: 46,
-        decoration: const BoxDecoration(
-            color: AppTheme.bg, shape: BoxShape.circle),
-        alignment: Alignment.center,
-        child: const Text('OR',
-            style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
-      ),
-    );
-  }
-
   Widget _footer(Question q) {
     if (_chosen == null) {
-      return Text('Tap a side to choose',
-          style: TextStyle(color: AppTheme.muted, fontSize: 13));
+      return Text('Tap a card to choose',
+          style: TextStyle(color: AppTheme.muted, fontSize: 14));
     }
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -255,7 +285,7 @@ class _GameScreenState extends State<GameScreen> {
           onPressed: _next,
           style: FilledButton.styleFrom(backgroundColor: AppTheme.crimson),
           icon: const Icon(Icons.skip_next),
-          label: const Text('Next'),
+          label: const Text('Next question'),
         ),
       ],
     );
@@ -272,7 +302,8 @@ class _GameScreenState extends State<GameScreen> {
             Icon(icon, size: 48, color: AppTheme.muted),
             const SizedBox(height: 12),
             Text(title,
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+                style:
+                    const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
             const SizedBox(height: 6),
             Text(sub,
                 textAlign: TextAlign.center,
@@ -289,6 +320,7 @@ class _GameScreenState extends State<GameScreen> {
 }
 
 class _ChoiceCard extends StatelessWidget {
+  final String label; // 'A' / 'B'
   final String text;
   final Color color;
   final double percent;
@@ -297,6 +329,7 @@ class _ChoiceCard extends StatelessWidget {
   final VoidCallback onTap;
 
   const _ChoiceCard({
+    required this.label,
     required this.text,
     required this.color,
     required this.percent,
@@ -308,66 +341,72 @@ class _ChoiceCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final pct = (percent * 100).round();
-    return Padding(
-      padding: const EdgeInsets.all(6),
-      child: GestureDetector(
-        onTap: onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 220),
-          decoration: BoxDecoration(
-            color: AppTheme.card,
-            borderRadius: BorderRadius.circular(22),
-            border: Border.all(
-              color: picked ? color : Colors.white.withOpacity(0.07),
-              width: picked ? 2.5 : 1,
-            ),
-            boxShadow: picked
-                ? [BoxShadow(color: color.withOpacity(0.35), blurRadius: 22)]
-                : null,
-          ),
-          clipBehavior: Clip.antiAlias,
+    final dim = revealed && !picked;
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(
+          color: picked ? color : Colors.white.withOpacity(0.08),
+          width: picked ? 2.5 : 1,
+        ),
+        boxShadow: picked
+            ? [BoxShadow(color: color.withOpacity(0.35), blurRadius: 22)]
+            : null,
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Material(
+        color: AppTheme.card,
+        child: InkWell(
+          onTap: revealed ? null : onTap,
+          splashColor: color.withOpacity(0.25),
           child: Stack(
+            fit: StackFit.expand,
             children: [
-              // reveal fill bar
+              // result fill bar grows from the bottom
               if (revealed)
                 Align(
                   alignment: Alignment.bottomCenter,
                   child: LayoutBuilder(builder: (_, cc) {
                     return AnimatedContainer(
-                      duration: const Duration(milliseconds: 500),
+                      duration: const Duration(milliseconds: 450),
                       curve: Curves.easeOutCubic,
                       height: cc.maxHeight * percent,
                       color: color.withOpacity(0.30),
                     );
                   }),
                 ),
-              Padding(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    Flexible(
-                      child: Center(
-                        child: Text(
-                          text,
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                              fontSize: 19,
-                              height: 1.25,
-                              fontWeight: FontWeight.w700),
+              AnimatedOpacity(
+                duration: const Duration(milliseconds: 200),
+                opacity: dim ? 0.55 : 1,
+                child: Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Flexible(
+                        child: Center(
+                          child: Text(
+                            text,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                                fontSize: 20,
+                                height: 1.25,
+                                fontWeight: FontWeight.w700),
+                          ),
                         ),
                       ),
-                    ),
-                    if (revealed) ...[
-                      const SizedBox(height: 12),
-                      Text('$pct%',
-                          style: TextStyle(
-                              fontSize: 30,
-                              fontWeight: FontWeight.w900,
-                              color: color)),
+                      if (revealed) ...[
+                        const SizedBox(height: 12),
+                        Text('$pct%',
+                            style: TextStyle(
+                                fontSize: 34,
+                                fontWeight: FontWeight.w900,
+                                color: color)),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
               ),
               if (picked)

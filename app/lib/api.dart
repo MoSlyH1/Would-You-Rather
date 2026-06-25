@@ -45,7 +45,14 @@ class Api {
 
   static Future<List<Question>> fetchQuestions({String? category}) async {
     final q = (category != null && category != 'All') ? {'category': category} : null;
-    final r = await http.get(_u('/api/questions', q));
+    final http.Response r;
+    try {
+      r = await http
+          .get(_u('/api/questions', q))
+          .timeout(const Duration(seconds: 60));
+    } catch (_) {
+      throw ApiException('Could not reach the server. Check your connection and try again.');
+    }
     final data = _decode(r) as List;
     return data.map((e) => Question.fromJson(e as Map<String, dynamic>)).toList();
   }
@@ -57,8 +64,10 @@ class Api {
   }
 
   static Future<Map<String, int>> vote(int id, String choice) async {
-    final r = await http.post(_u('/api/questions/$id/vote'),
-        headers: _jsonHeaders, body: jsonEncode({'choice': choice}));
+    final r = await http
+        .post(_u('/api/questions/$id/vote'),
+            headers: _jsonHeaders, body: jsonEncode({'choice': choice}))
+        .timeout(const Duration(seconds: 15));
     final j = _decode(r) as Map<String, dynamic>;
     return {'votes_a': j['votes_a'] as int, 'votes_b': j['votes_b'] as int};
   }
